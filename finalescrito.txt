@@ -89,12 +89,18 @@
       box-shadow: 0 0 18px rgba(199,21,133,0.6);
     }
     .articulo img {
-      max-width: 100%;
-      max-height: 150px;
+      width: 100%;
+      height: auto;
+      max-height: 180px;
       object-fit: contain;
       border-radius: 10px;
       margin-bottom: 12px;
       user-select: none;
+      filter: contrast(1.05) saturate(1.1);
+      transition: filter 0.3s ease;
+    }
+    .articulo img:hover {
+      filter: contrast(1.1) saturate(1.2) brightness(1.05);
     }
     .articulo h3 {
       font-weight: 700;
@@ -354,7 +360,7 @@
         grid-template-columns: repeat(auto-fill,minmax(160px,1fr));
       }
       .articulo img {
-        max-height: 120px;
+        max-height: 140px;
       }
       .header-admin {
         flex-direction: column;
@@ -438,7 +444,6 @@
         margin-bottom: 12px;
       }
     }
-
   </style>
 </head>
 <body>
@@ -533,251 +538,192 @@
         ? productos
         : productos.filter(p => p.categoria === filtroCategorias.value);
 
+      const totalPaginas = Math.ceil(productosFiltrados.length / ITEMS_POR_PAGINA);
+      if(paginaActual > totalPaginas) paginaActual = totalPaginas || 1;
+
       const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
       const fin = inicio + ITEMS_POR_PAGINA;
       const productosPagina = productosFiltrados.slice(inicio, fin);
 
       productosContainer.innerHTML = productosPagina.map(p => `
-        <div class="articulo">
-          <img src="${p.img}" alt="${p.nombre}" loading="lazy" />
+        <div class="articulo" data-id="${p.id}">
+          <img src="${p.imagen}" alt="${p.nombre}" />
           <h3>${p.nombre}</h3>
-          <div class="precio">$${p.precio.toFixed(2)}</div>
-          <div class="stock-visible ${p.stock > 0 ? '' : 'sin-stock'}">
+          <div class="precio">$${p.precio}</div>
+          <div class="${p.stock > 0 ? 'stock-visible' : 'stock-visible sin-stock'}">
             ${p.stock > 0 ? `Stock: ${p.stock}` : 'Sin stock'}
           </div>
-          ${esAdmin
-            ? `<input type="number" min="0" value="${p.stock}" data-id="${p.id}" class="input-stock-admin" />
-               <input type="number" min="0" step="0.01" value="${p.precio}" data-id="${p.id}" class="input-precio-admin" />`
-            : `<button class="boton" ${p.stock > 0 ? '' : 'disabled'} onclick="agregarAlCarrito('${p.id}')">Agregar</button>`
-          }
+          ${esAdmin ? `
+            <input type="number" class="input-precio-admin" value="${p.precio}" min="1" />
+            <button class="btn-stock-admin">Actualizar precio</button>
+          ` : `
+            <button class="boton" ${p.stock <= 0 ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})">Agregar al carrito</button>
+          `}
         </div>
       `).join('');
 
-      renderPaginacion();
-      agregarEventosAdminInputs();
+      renderPaginacion(totalPaginas);
     }
 
     // Render paginación
-    function renderPaginacion() {
-      const totalPaginas = Math.ceil(productosFiltrados.length / ITEMS_POR_PAGINA);
-      if (totalPaginas <= 1) {
-        paginacionDiv.innerHTML = '';
-        return;
-      }
+    function renderPaginacion(totalPaginas) {
       let html = '';
-      for (let i = 1; i <= totalPaginas; i++) {
+      for(let i=1; i<=totalPaginas; i++) {
         html += `<button ${i === paginaActual ? 'disabled' : ''} onclick="cambiarPagina(${i})">${i}</button>`;
       }
       paginacionDiv.innerHTML = html;
     }
 
-    function cambiarPagina(num) {
-      paginaActual = num;
+    function cambiarPagina(p) {
+      paginaActual = p;
       renderProductos();
     }
 
-    // Filtrar productos
     filtroCategorias.addEventListener('change', () => {
       paginaActual = 1;
       renderProductos();
     });
 
-    // Cargar productos de Firebase
+    // Cargar productos desde Firebase
     function cargarProductos() {
       db.ref('productos').on('value', snapshot => {
-        const data = snapshot.val();
         productos = [];
-        for (const id in data) {
-          productos.push({...data[id], id});
-        }
+        snapshot.forEach(childSnapshot => {
+          productos.push(childSnapshot.val());
+        });
         cargarCategorias();
         renderProductos();
-        cargarCarritoLocal();
       });
     }
 
-    // Agregar al carrito
+    // Carrito
+    const carritoLista = document.getElementById('carritoLista');
+    const listaItems = document.getElementById('listaItems');
+    const contador = document.getElementById('contador');
+    const totalItems = document.getElementById('totalItems');
+    const btnPedirWhatsApp = document.getElementById('btnPedirWhatsApp');
+
     function agregarAlCarrito(id) {
-      const prod = productos.find(p => p.id === id);
-      if (!prod || prod.stock < 1) return alert('Producto sin stock');
-      const enCarrito = carrito.find(c => c.id === id);
-      if (enCarrito) {
-        if (enCarrito.cantidad < prod.stock) {
-          enCarrito.cantidad++;
-        } else {
-          alert('No hay más stock disponible');
+      const producto = productos.find(p => p.id === id);
+      if(!producto || producto.stock <= 0) return;
+
+      let itemCarrito = carrito.find(i => i.id === id);
+      if(itemCarrito) {
+        if(itemCarrito.cantidad < producto.stock) {
+          itemCarrito.cantidad++;
         }
       } else {
-        carrito.push({id, cantidad: 1});
+        carrito.push({ id, cantidad: 1 });
       }
-      guardarCarritoLocal();
-      renderCarrito();
+      actualizarCarrito();
     }
 
-    // Guardar carrito en localStorage
-    function guardarCarritoLocal() {
-      localStorage.setItem('carrito-armeli', JSON.stringify(carrito));
-      actualizarContador();
-      actualizarBotonWhatsApp();
-    }
-
-    // Cargar carrito desde localStorage
-    function cargarCarritoLocal() {
-      const data = localStorage.getItem('carrito-armeli');
-      if (data) {
-        carrito = JSON.parse(data);
-      }
-      renderCarrito();
-      actualizarContador();
-      actualizarBotonWhatsApp();
-    }
-
-    // Render carrito
-    function renderCarrito() {
-      const listaItems = document.getElementById('listaItems');
+    function actualizarCarrito() {
       listaItems.innerHTML = '';
       let total = 0;
+      carrito = carrito.filter(i => {
+        const producto = productos.find(p => p.id === i.id);
+        return producto && producto.stock > 0;
+      });
       carrito.forEach(item => {
-        const prod = productos.find(p => p.id === item.id);
-        if (!prod) return;
-        const subtotal = prod.precio * item.cantidad;
+        const producto = productos.find(p => p.id === item.id);
+        const subtotal = producto.precio * item.cantidad;
         total += subtotal;
 
         const li = document.createElement('li');
         li.innerHTML = `
-          ${prod.nombre} - $${prod.precio.toFixed(2)} x
-          <select onchange="cambiarCantidad('${item.id}', this.value)">
-            ${Array.from({length: prod.stock}, (_, i) => i + 1)
-              .map(num => `<option value="${num}" ${num == item.cantidad ? 'selected' : ''}>${num}</option>`).join('')}
+          ${producto.nombre} ($${producto.precio}) 
+          <select onchange="cambiarCantidad(${item.id}, this.value)">
+            ${[...Array(producto.stock).keys()].map(x => `<option value="${x+1}" ${item.cantidad === x+1 ? 'selected' : ''}>${x+1}</option>`).join('')}
           </select>
-          = $${subtotal.toFixed(2)}
-          <button onclick="quitarDelCarrito('${item.id}')">X</button>
+          <button onclick="quitarDelCarrito(${item.id})">x</button>
         `;
         listaItems.appendChild(li);
       });
-      document.getElementById('totalItems').textContent = total.toFixed(2);
+      contador.textContent = carrito.reduce((acc, i) => acc + i.cantidad, 0);
+      totalItems.textContent = total.toFixed(2);
+      btnPedirWhatsApp.disabled = carrito.length === 0;
     }
 
-    // Cambiar cantidad en carrito
     function cambiarCantidad(id, cantidad) {
       cantidad = parseInt(cantidad);
-      const item = carrito.find(c => c.id === id);
-      const prod = productos.find(p => p.id === id);
-      if (!item || !prod) return;
-      if (cantidad > prod.stock) {
-        alert('No hay suficiente stock');
-        return;
+      let item = carrito.find(i => i.id === id);
+      if(item) {
+        item.cantidad = cantidad;
+        actualizarCarrito();
       }
-      item.cantidad = cantidad;
-      guardarCarritoLocal();
-      renderCarrito();
     }
 
-    // Quitar del carrito
     function quitarDelCarrito(id) {
-      carrito = carrito.filter(c => c.id !== id);
-      guardarCarritoLocal();
-      renderCarrito();
+      carrito = carrito.filter(i => i.id !== id);
+      actualizarCarrito();
     }
 
-    // Toggle carrito
     function toggleCarrito() {
-      const carritoLista = document.getElementById('carritoLista');
       carritoLista.style.display = carritoLista.style.display === 'block' ? 'none' : 'block';
     }
 
-    // Actualizar contador carrito
-    function actualizarContador() {
-      const contador = document.getElementById('contador');
-      const totalCantidad = carrito.reduce((acc, item) => acc + item.cantidad, 0);
-      contador.textContent = totalCantidad;
-    }
-
-    // Actualizar botón WhatsApp
-    function actualizarBotonWhatsApp() {
-      const btn = document.getElementById('btnPedirWhatsApp');
-      btn.disabled = carrito.length === 0;
-    }
-
-    // Pedido por WhatsApp
+    // Pedir por WhatsApp
     function pedirWhatsApp() {
-      if (carrito.length === 0) return;
-      const numero = '5491164382676';
-      let mensaje = 'Hola, quiero hacer un pedido:%0A';
+      if(carrito.length === 0) return;
+      let mensaje = 'Hola, quiero hacer el siguiente pedido:%0A';
       carrito.forEach(item => {
-        const prod = productos.find(p => p.id === item.id);
-        if (prod) {
-          mensaje += `${prod.nombre} - Cantidad: ${item.cantidad}%0A`;
-        }
+        const producto = productos.find(p => p.id === item.id);
+        mensaje += `${item.cantidad} x ${producto.nombre} - $${producto.precio * item.cantidad}%0A`;
       });
-      const url = `https://wa.me/${numero}?text=${mensaje}`;
+      mensaje += `Total: $${totalItems.textContent}`;
+      const url = `https://wa.me/5491123456789?text=${mensaje}`;
       window.open(url, '_blank');
     }
 
-    // Toggle modo admin
+    // Modo administrador
     const btnAdminToggle = document.getElementById('btnAdminToggle');
+
     btnAdminToggle.addEventListener('click', () => {
-      if (!esAdmin) {
-        const clave = prompt('Ingrese clave de administrador:');
-        if (clave === AUTH_CODE) {
-          esAdmin = true;
-          btnAdminToggle.textContent = 'Salir modo administrador';
-        } else {
-          alert('Clave incorrecta');
-          return;
-        }
-      } else {
+      if(esAdmin) {
         esAdmin = false;
         btnAdminToggle.textContent = 'Entrar modo administrador';
+        renderProductos();
+      } else {
+        const clave = prompt('Ingrese la clave de administrador:');
+        if(clave === AUTH_CODE) {
+          esAdmin = true;
+          btnAdminToggle.textContent = 'Salir modo administrador';
+          renderProductos();
+        } else {
+          alert('Clave incorrecta');
+        }
       }
-      renderProductos();
     });
 
-    // Escuchar cambios en inputs admin para stock y precio
-    function agregarEventosAdminInputs() {
-      const inputsStock = document.querySelectorAll('.input-stock-admin');
-      const inputsPrecio = document.querySelectorAll('.input-precio-admin');
+    // Actualizar precio producto (modo admin)
+    productosContainer.addEventListener('click', e => {
+      if(!esAdmin) return;
+      if(e.target.classList.contains('btn-stock-admin')) {
+        const articuloDiv = e.target.closest('.articulo');
+        const id = parseInt(articuloDiv.getAttribute('data-id'));
+        const inputPrecio = articuloDiv.querySelector('.input-precio-admin');
+        let nuevoPrecio = parseFloat(inputPrecio.value);
+        if(isNaN(nuevoPrecio) || nuevoPrecio <= 0) {
+          alert('Ingrese un precio válido mayor a 0');
+          return;
+        }
+        db.ref(`productos/${id}`).update({ precio: nuevoPrecio }).then(() => {
+          alert('Precio actualizado');
+        }).catch(() => {
+          alert('Error al actualizar');
+        });
+      }
+    });
 
-      inputsStock.forEach(input => {
-        input.onchange = () => {
-          const id = input.dataset.id;
-          let nuevoStock = parseInt(input.value);
-          if (isNaN(nuevoStock) || nuevoStock < 0) {
-            alert('Stock inválido');
-            renderProductos();
-            return;
-          }
-          // Actualizar stock en Firebase
-          db.ref('productos/' + id).update({ stock: nuevoStock })
-            .catch(() => alert('Error al actualizar stock'));
-        };
-      });
-
-      inputsPrecio.forEach(input => {
-        input.onchange = () => {
-          const id = input.dataset.id;
-          let nuevoPrecio = parseFloat(input.value);
-          if (isNaN(nuevoPrecio) || nuevoPrecio < 0) {
-            alert('Precio inválido');
-            renderProductos();
-            return;
-          }
-          // Actualizar precio en Firebase
-          db.ref('productos/' + id).update({ precio: nuevoPrecio })
-            .catch(() => alert('Error al actualizar precio'));
-        };
-      });
-    }
-
-    // Cerrar popup
+    // Popup bienvenida
     function cerrarPopup() {
       document.getElementById('popup-overlay').style.display = 'none';
     }
 
-    // Inicialización
-    window.onload = () => {
-      cargarProductos();
-    };
+    // Carga inicial
+    cargarProductos();
+    actualizarCarrito();
   </script>
 </body>
 </html>
