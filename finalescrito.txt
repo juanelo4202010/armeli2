@@ -539,44 +539,265 @@
         : productos.filter(p => p.categoria === filtroCategorias.value);
 
       const totalPaginas = Math.ceil(productosFiltrados.length / ITEMS_POR_PAGINA);
-      if(paginaActual > totalPaginas) paginaActual = totalPaginas || 1;
+      if (paginaActual > totalPaginas) paginaActual = 1;
 
       const inicio = (paginaActual - 1) * ITEMS_POR_PAGINA;
       const fin = inicio + ITEMS_POR_PAGINA;
-      const productosPagina = productosFiltrados.slice(inicio, fin);
+      const paginaProductos = productosFiltrados.slice(inicio, fin);
 
-      productosContainer.innerHTML = productosPagina.map(p => `
-        <div class="articulo" data-id="${p.id}">
-          <img src="${p.imagen}" alt="${p.nombre}" />
-          <h3>${p.nombre}</h3>
-          <div class="precio">$${p.precio}</div>
-          <div class="${p.stock > 0 ? 'stock-visible' : 'stock-visible sin-stock'}">
-            ${p.stock > 0 ? `Stock: ${p.stock}` : 'Sin stock'}
-          </div>
-          ${esAdmin ? `
-            <input type="number" class="input-precio-admin" value="${p.precio}" min="1" />
-            <button class="btn-stock-admin">Actualizar precio</button>
-          ` : `
-            <button class="boton" ${p.stock <= 0 ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})">Agregar al carrito</button>
-          `}
-        </div>
-      `).join('');
+      productosContainer.innerHTML = paginaProductos.map(p => {
+        if (p.opciones) {
+          // Producto con opciones
+          const primeraOpcion = Object.entries(p.opciones)[0];
+          const primeraClave = primeraOpcion[0];
+          const primerPrecio = primeraOpcion[1];
+          const opcionesHTML = Object.entries(p.opciones)
+            .map(([key, val]) => `<option value="${key}" data-precio="${val}">${key} - $${val}</option>`)
+            .join('');
+          return `
+            <div class="articulo" data-id="${p.id}">
+              <img src="${p.imagen}" alt="${p.nombre}" />
+              <h3>${p.nombre}</h3>
+              <select class="select-opciones" onchange="actualizarPrecio(${p.id}, this)">
+                ${opcionesHTML}
+              </select>
+              <div class="precio" id="precio-${p.id}">$${primerPrecio}</div>
+              <div class="${p.stock > 0 ? 'stock-visible' : 'stock-visible sin-stock'}">
+                ${p.stock > 0 ? `Stock: ${p.stock}` : 'Sin stock'}
+              </div>
+              ${esAdmin ? `
+                <input type="number" class="input-precio-admin" value="${primerPrecio}" min="1" />
+                <button class="btn-stock-admin">Actualizar precio</button>
+              ` : `
+                <button class="boton" ${p.stock <= 0 ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id}, document.querySelector('.articulo[data-id=\'${p.id}\'] .select-opciones').value)">Agregar al carrito</button>
+              `}
+            </div>
+          `;
+        } else {
+          // Producto sin opciones
+          return `
+            <div class="articulo" data-id="${p.id}">
+              <img src="${p.imagen}" alt="${p.nombre}" />
+              <h3>${p.nombre}</h3>
+              <div class="precio" id="precio-${p.id}">$${p.precio}</div>
+              <div class="${p.stock > 0 ? 'stock-visible' : 'stock-visible sin-stock'}">
+                ${p.stock > 0 ? `Stock: ${p.stock}` : 'Sin stock'}
+              </div>
+              ${esAdmin ? `
+                <input type="number" class="input-precio-admin" value="${p.precio}" min="1" />
+                <button class="btn-stock-admin">Actualizar precio</button>
+              ` : `
+                <button class="boton" ${p.stock <= 0 ? 'disabled' : ''} onclick="agregarAlCarrito(${p.id})">Agregar al carrito</button>
+              `}
+            </div>
+          `;
+        }
+      }).join('');
 
       renderPaginacion(totalPaginas);
     }
 
-    // Render paginación
+    // Actualiza el precio mostrado cuando cambia la opción
+    function actualizarPrecio(id, selectElem) {
+      const opcionSeleccionada = selectElem.value;
+      const precio = parseFloat(selectElem.selectedOptions[0].dataset.precio);
+      const precioDiv = document.getElementById(`precio-${id}`);
+      if (precioDiv) {
+        precioDiv.textContent = `$${precio}`;
+      }
+    }
+
+    // Renderizar paginación
     function renderPaginacion(totalPaginas) {
       let html = '';
-      for(let i=1; i<=totalPaginas; i++) {
+      for (let i = 1; i <= totalPaginas; i++) {
         html += `<button ${i === paginaActual ? 'disabled' : ''} onclick="cambiarPagina(${i})">${i}</button>`;
       }
       paginacionDiv.innerHTML = html;
     }
-
-    function cambiarPagina(p) {
-      paginaActual = p;
+    function cambiarPagina(num) {
+      paginaActual = num;
       renderProductos();
+    }
+
+    // Agregar producto al carrito (con opción si la hay)
+    function agregarAlCarrito(id, opcion = null) {
+      const producto = productos.find(p => p.id === id);
+      if (!producto || producto.stock <= 0) return;
+
+      let precioProducto;
+      if (opcion && producto.opciones && producto.opciones[opcion] !== undefined) {
+        precioProducto = producto.opciones[opcion];
+      } else {
+        precioProducto = producto.precio;
+        opcion = null;
+      }
+
+      // Buscar ítem en carrito con misma opción
+      let itemCarrito = carrito.find(i => i.id === id && i.opcion === opcion);
+      if (itemCarrito) {
+        if (itemCarrito.cantidad < producto.stock) {
+          itemCarrito.cantidad++;
+        }
+      } else {
+        carrito.push({ id, opcion, cantidad: 1, precio: precioProducto });
+      }
+      actualizarCarrito();
+    }
+
+    // Actualizar carrito: mostrar items, total y contador
+    function actualizarCarrito() {
+      const listaItems = document.getElementById('listaItems');
+      const contador = document.getElementById('contador');
+      const totalItems = document.getElementById('totalItems');
+      listaItems.innerHTML = '';
+
+      let total = 0;
+      // Filtramos productos con stock > 0
+      carrito = carrito.filter(i => {
+        const prod = productos.find(p => p.id === i.id);
+        return prod && prod.stock > 0;
+      });
+
+      carrito.forEach(item => {
+        const producto = productos.find(p => p.id === item.id);
+        let nombreCompleto = producto.nombre;
+        if (item.opcion) {
+          nombreCompleto += ` (${item.opcion})`;
+        }
+        const subtotal = item.precio * item.cantidad;
+        total += subtotal;
+
+        const li = document.createElement('li');
+        li.innerHTML = `
+          ${nombreCompleto} ($${item.precio}) 
+          <select onchange="cambiarCantidad(${item.id}, this.value, '${item.opcion ? item.opcion : ''}')">
+            ${[...Array(producto.stock).keys()]
+              .map(x => `<option value="${x+1}" ${item.cantidad === x+1 ? 'selected' : ''}>${x+1}</option>`)
+              .join('')}
+          </select>
+          <button onclick="quitarDelCarrito(${item.id}, '${item.opcion ? item.opcion : ''}')">x</button>
+        `;
+        listaItems.appendChild(li);
+      });
+
+      contador.textContent = carrito.reduce((acc, i) => acc + i.cantidad, 0);
+      totalItems.textContent = total.toFixed(2);
+      document.getElementById('btnPedirWhatsApp').disabled = carrito.length === 0;
+    }
+
+    // Cambiar cantidad en carrito
+    function cambiarCantidad(id, cantidad, opcion = null) {
+      cantidad = parseInt(cantidad);
+      let item = carrito.find(i => i.id === id && i.opcion === (opcion || null));
+      if (item) {
+        item.cantidad = cantidad;
+        actualizarCarrito();
+      }
+    }
+
+    // Quitar item carrito
+    function quitarDelCarrito(id, opcion = null) {
+      carrito = carrito.filter(i => !(i.id === id && i.opcion === (opcion || null)));
+      actualizarCarrito();
+    }
+
+    // Toggle carrito visible
+    function toggleCarrito() {
+      const carritoLista = document.getElementById('carritoLista');
+      if (carritoLista.style.display === 'block') {
+        carritoLista.style.display = 'none';
+      } else {
+        carritoLista.style.display = 'block';
+      }
+    }
+
+    // Pedir por WhatsApp
+    function pedirWhatsApp() {
+      if (carrito.length === 0) return;
+      let mensaje = 'Hola! Quisiera hacer el siguiente pedido:%0A';
+      carrito.forEach(item => {
+        const prod = productos.find(p => p.id === item.id);
+        let nombreCompleto = prod.nombre;
+        if (item.opcion) {
+          nombreCompleto += ` (${item.opcion})`;
+        }
+        mensaje += `${item.cantidad} x ${nombreCompleto} - $${item.precio} c/u%0A`;
+      });
+      const total = carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
+      mensaje += `%0ATotal: $${total.toFixed(2)}`;
+      const numeroWhatsApp = '5491123456789'; // Cambiar por tu número sin espacios ni signos
+      const url = `https://wa.me/${numeroWhatsApp}?text=${mensaje}`;
+      window.open(url, '_blank');
+    }
+
+    // Modo Admin
+    const btnAdminToggle = document.getElementById('btnAdminToggle');
+    btnAdminToggle.addEventListener('click', () => {
+      if (!esAdmin) {
+        const pass = prompt('Ingrese la clave de administrador:');
+        if (pass === AUTH_CODE) {
+          esAdmin = true;
+          btnAdminToggle.textContent = 'Salir modo administrador';
+          alert('Modo administrador activado');
+          renderProductos();
+          activarEventosAdmin();
+        } else {
+          alert('Clave incorrecta');
+        }
+      } else {
+        esAdmin = false;
+        btnAdminToggle.textContent = 'Entrar modo administrador';
+        renderProductos();
+      }
+    });
+
+    // Eventos para actualizar precio admin
+    function activarEventosAdmin() {
+      document.querySelectorAll('.btn-stock-admin').forEach(btn => {
+        btn.onclick = () => {
+          const divArticulo = btn.closest('.articulo');
+          const id = parseInt(divArticulo.dataset.id);
+          const inputPrecio = divArticulo.querySelector('.input-precio-admin');
+          let nuevoPrecio = parseFloat(inputPrecio.value);
+          if (isNaN(nuevoPrecio) || nuevoPrecio <= 0) {
+            alert('Ingrese un precio válido mayor que 0');
+            return;
+          }
+
+          const prodIndex = productos.findIndex(p => p.id === id);
+          if (prodIndex === -1) return;
+
+          // Actualizar precio si no tiene opciones
+          if (!productos[prodIndex].opciones) {
+            productos[prodIndex].precio = nuevoPrecio;
+            // Guardar en Firebase
+            db.ref('productos/' + id).update({ precio: nuevoPrecio });
+            alert('Precio actualizado correctamente');
+            renderProductos();
+          } else {
+            alert('Productos con opciones no se actualizan desde aquí.');
+          }
+        };
+      });
+    }
+
+    // Cargar productos desde Firebase
+    function cargarProductosDesdeFirebase() {
+      db.ref('productos').once('value')
+        .then(snapshot => {
+          productos = [];
+          snapshot.forEach(child => {
+            const p = child.val();
+            productos.push(p);
+          });
+          cargarCategorias();
+          renderProductos();
+          actualizarCarrito();
+        })
+        .catch(error => {
+          alert('Error cargando productos desde Firebase: ' + error.message);
+        });
     }
 
     filtroCategorias.addEventListener('change', () => {
@@ -584,146 +805,15 @@
       renderProductos();
     });
 
-    // Cargar productos desde Firebase
-    function cargarProductos() {
-      db.ref('productos').on('value', snapshot => {
-        productos = [];
-        snapshot.forEach(childSnapshot => {
-          productos.push(childSnapshot.val());
-        });
-        cargarCategorias();
-        renderProductos();
-      });
-    }
-
-    // Carrito
-    const carritoLista = document.getElementById('carritoLista');
-    const listaItems = document.getElementById('listaItems');
-    const contador = document.getElementById('contador');
-    const totalItems = document.getElementById('totalItems');
-    const btnPedirWhatsApp = document.getElementById('btnPedirWhatsApp');
-
-    function agregarAlCarrito(id) {
-      const producto = productos.find(p => p.id === id);
-      if(!producto || producto.stock <= 0) return;
-
-      let itemCarrito = carrito.find(i => i.id === id);
-      if(itemCarrito) {
-        if(itemCarrito.cantidad < producto.stock) {
-          itemCarrito.cantidad++;
-        }
-      } else {
-        carrito.push({ id, cantidad: 1 });
-      }
-      actualizarCarrito();
-    }
-
-    function actualizarCarrito() {
-      listaItems.innerHTML = '';
-      let total = 0;
-      carrito = carrito.filter(i => {
-        const producto = productos.find(p => p.id === i.id);
-        return producto && producto.stock > 0;
-      });
-      carrito.forEach(item => {
-        const producto = productos.find(p => p.id === item.id);
-        const subtotal = producto.precio * item.cantidad;
-        total += subtotal;
-
-        const li = document.createElement('li');
-        li.innerHTML = `
-          ${producto.nombre} ($${producto.precio}) 
-          <select onchange="cambiarCantidad(${item.id}, this.value)">
-            ${[...Array(producto.stock).keys()].map(x => `<option value="${x+1}" ${item.cantidad === x+1 ? 'selected' : ''}>${x+1}</option>`).join('')}
-          </select>
-          <button onclick="quitarDelCarrito(${item.id})">x</button>
-        `;
-        listaItems.appendChild(li);
-      });
-      contador.textContent = carrito.reduce((acc, i) => acc + i.cantidad, 0);
-      totalItems.textContent = total.toFixed(2);
-      btnPedirWhatsApp.disabled = carrito.length === 0;
-    }
-
-    function cambiarCantidad(id, cantidad) {
-      cantidad = parseInt(cantidad);
-      let item = carrito.find(i => i.id === id);
-      if(item) {
-        item.cantidad = cantidad;
-        actualizarCarrito();
-      }
-    }
-
-    function quitarDelCarrito(id) {
-      carrito = carrito.filter(i => i.id !== id);
-      actualizarCarrito();
-    }
-
-    function toggleCarrito() {
-      carritoLista.style.display = carritoLista.style.display === 'block' ? 'none' : 'block';
-    }
-
-    // Pedir por WhatsApp
-    function pedirWhatsApp() {
-      if(carrito.length === 0) return;
-      let mensaje = 'Hola, quiero hacer el siguiente pedido:%0A';
-      carrito.forEach(item => {
-        const producto = productos.find(p => p.id === item.id);
-        mensaje += `${item.cantidad} x ${producto.nombre} - $${producto.precio * item.cantidad}%0A`;
-      });
-      mensaje += `Total: $${totalItems.textContent}`;
-      const url = `https://wa.me/5491123456789?text=${mensaje}`;
-      window.open(url, '_blank');
-    }
-
-    // Modo administrador
-    const btnAdminToggle = document.getElementById('btnAdminToggle');
-
-    btnAdminToggle.addEventListener('click', () => {
-      if(esAdmin) {
-        esAdmin = false;
-        btnAdminToggle.textContent = 'Entrar modo administrador';
-        renderProductos();
-      } else {
-        const clave = prompt('Ingrese la clave de administrador:');
-        if(clave === AUTH_CODE) {
-          esAdmin = true;
-          btnAdminToggle.textContent = 'Salir modo administrador';
-          renderProductos();
-        } else {
-          alert('Clave incorrecta');
-        }
-      }
-    });
-
-    // Actualizar precio producto (modo admin)
-    productosContainer.addEventListener('click', e => {
-      if(!esAdmin) return;
-      if(e.target.classList.contains('btn-stock-admin')) {
-        const articuloDiv = e.target.closest('.articulo');
-        const id = parseInt(articuloDiv.getAttribute('data-id'));
-        const inputPrecio = articuloDiv.querySelector('.input-precio-admin');
-        let nuevoPrecio = parseFloat(inputPrecio.value);
-        if(isNaN(nuevoPrecio) || nuevoPrecio <= 0) {
-          alert('Ingrese un precio válido mayor a 0');
-          return;
-        }
-        db.ref(`productos/${id}`).update({ precio: nuevoPrecio }).then(() => {
-          alert('Precio actualizado');
-        }).catch(() => {
-          alert('Error al actualizar');
-        });
-      }
-    });
-
     // Popup bienvenida
     function cerrarPopup() {
-      document.getElementById('popup-overlay').style.display = 'none';
+      const popup = document.getElementById('popup-overlay');
+      popup.style.display = 'none';
     }
 
-    // Carga inicial
-    cargarProductos();
-    actualizarCarrito();
+    // Iniciar carga productos y demás
+    cargarProductosDesdeFirebase();
   </script>
 </body>
 </html>
+
